@@ -12,6 +12,30 @@ type ProviderSettingsRow = {
   updated_at: string;
 };
 
+function cleanSecrets(input?: Record<string, unknown>) {
+  if (!input) return {};
+
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === "string") return value.trim().length > 0;
+      return true;
+    })
+  );
+}
+
+function humanizeRepositoryError(error: unknown) {
+  if (error instanceof Error) {
+    if (error.message.includes("APP_ENCRYPTION_KEY")) {
+      return "APP_ENCRYPTION_KEY belum diisi di Vercel Environment Variables. Isi minimal 32 karakter lalu redeploy.";
+    }
+
+    return error.message;
+  }
+
+  return "Terjadi kesalahan saat menyimpan provider settings.";
+}
+
 export async function getChannelSetting(channel: ChannelKey) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
@@ -39,32 +63,36 @@ export async function upsertChannelSetting(params: {
   secretConfig?: Record<string, unknown>;
   updatedBy: string;
 }) {
-  const existingSecrets = (await getChannelSettingSecrets(params.channel)) ?? {};
-  const mergedSecrets = {
-    ...existingSecrets,
-    ...(params.secretConfig ?? {}),
-  };
+  try {
+    const existingSecrets = (await getChannelSettingSecrets(params.channel)) ?? {};
+    const mergedSecrets = {
+      ...existingSecrets,
+      ...cleanSecrets(params.secretConfig),
+    };
 
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("provider_settings")
-    .upsert(
-      {
-        channel: params.channel,
-        provider: params.provider,
-        public_config: params.publicConfig,
-        secret_payload_encrypted: Object.keys(mergedSecrets).length
-          ? encryptJson(mergedSecrets)
-          : null,
-        updated_by: params.updatedBy,
-      },
-      { onConflict: "channel" }
-    )
-    .select("*")
-    .single();
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin
+      .from("provider_settings")
+      .upsert(
+        {
+          channel: params.channel,
+          provider: params.provider,
+          public_config: params.publicConfig,
+          secret_payload_encrypted: Object.keys(mergedSecrets).length
+            ? encryptJson(mergedSecrets)
+            : null,
+          updated_by: params.updatedBy,
+        },
+        { onConflict: "channel" }
+      )
+      .select("*")
+      .single();
 
-  if (error) throw error;
-  return data as ProviderSettingsRow;
+    if (error) throw error;
+    return data as ProviderSettingsRow;
+  } catch (error) {
+    throw new Error(humanizeRepositoryError(error));
+  }
 }
 
 export async function getMaskedSettings(channel: ChannelKey) {

@@ -1,0 +1,33 @@
+{
+  "name": "telemarkethink",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TelemarkeTHINK WA & Email Automation starter for insurance business",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.57.4",
+    "clsx": "^2.1.1",
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "resend": "^6.2.2",
+    "tailwind-merge": "^3.3.1",
+    "twilio": "^5.10.4",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.1",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.3"
+  }
+}

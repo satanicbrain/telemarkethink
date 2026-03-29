@@ -15,10 +15,31 @@ type MaskedSettings = {
   updatedAt: string | null;
 };
 
+type Notice = {
+  type: "success" | "error";
+  text: string;
+};
+
+async function parseResponse(response: Response) {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+
+  const text = await response.text();
+  return { error: text || "Server tidak mengembalikan respons JSON." };
+}
+
 export default function ProviderSettingsPage() {
   const [wa, setWa] = useState<MaskedSettings | null>(null);
   const [email, setEmail] = useState<MaskedSettings | null>(null);
-  const [message, setMessage] = useState("");
+  const [pageMessage, setPageMessage] = useState<Notice | null>(null);
+  const [waMessage, setWaMessage] = useState<Notice | null>(null);
+  const [emailMessage, setEmailMessage] = useState<Notice | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [waSaving, setWaSaving] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
   const [waForm, setWaForm] = useState({
     provider: "meta_cloud_api",
     graphApiVersion: "v23.0",
@@ -41,38 +62,63 @@ export default function ProviderSettingsPage() {
   });
 
   async function loadData() {
-    const [waResponse, emailResponse] = await Promise.all([
-      fetch("/api/settings/whatsapp"),
-      fetch("/api/settings/email"),
-    ]);
+    setLoading(true);
+    setPageMessage(null);
 
-    const waJson = await waResponse.json();
-    const emailJson = await emailResponse.json();
+    try {
+      const [waResponse, emailResponse] = await Promise.all([
+        fetch("/api/settings/whatsapp", { cache: "no-store" }),
+        fetch("/api/settings/email", { cache: "no-store" }),
+      ]);
 
-    setWa(waJson.data);
-    setEmail(emailJson.data);
+      const waJson = await parseResponse(waResponse);
+      const emailJson = await parseResponse(emailResponse);
 
-    if (waJson.data) {
-      setWaForm((prev) => ({
-        ...prev,
-        provider: waJson.data.provider ?? "meta_cloud_api",
-        graphApiVersion: waJson.data.publicConfig?.graphApiVersion ?? "v23.0",
-        phoneNumberId: waJson.data.publicConfig?.phoneNumberId ?? "",
-        businessAccountId: waJson.data.publicConfig?.businessAccountId ?? "",
-        accountSid: waJson.data.publicConfig?.accountSid ?? "",
-        fromNumber: waJson.data.publicConfig?.fromNumber ?? "",
-        baseUrl: waJson.data.publicConfig?.baseUrl ?? "",
-        sender: waJson.data.publicConfig?.sender ?? "",
-        extraHeadersJson: waJson.data.publicConfig?.extraHeadersJson ?? "",
-      }));
-    }
+      if (!waResponse.ok) {
+        throw new Error(waJson.error ?? "Gagal memuat settings WhatsApp.");
+      }
 
-    if (emailJson.data) {
-      setEmailForm((prev) => ({
-        ...prev,
-        provider: emailJson.data.provider ?? "resend",
-        fromEmail: emailJson.data.publicConfig?.fromEmail ?? "",
-      }));
+      if (!emailResponse.ok) {
+        throw new Error(emailJson.error ?? "Gagal memuat settings email.");
+      }
+
+      setWa(waJson.data);
+      setEmail(emailJson.data);
+
+      if (waJson.data) {
+        setWaForm((prev) => ({
+          ...prev,
+          provider: waJson.data.provider ?? "meta_cloud_api",
+          graphApiVersion: waJson.data.publicConfig?.graphApiVersion ?? "v23.0",
+          phoneNumberId: waJson.data.publicConfig?.phoneNumberId ?? "",
+          businessAccountId: waJson.data.publicConfig?.businessAccountId ?? "",
+          accountSid: waJson.data.publicConfig?.accountSid ?? "",
+          fromNumber: waJson.data.publicConfig?.fromNumber ?? "",
+          baseUrl: waJson.data.publicConfig?.baseUrl ?? "",
+          sender: waJson.data.publicConfig?.sender ?? "",
+          extraHeadersJson: waJson.data.publicConfig?.extraHeadersJson ?? "",
+          accessToken: "",
+          webhookVerifyToken: "",
+          authToken: "",
+          apiKey: "",
+        }));
+      }
+
+      if (emailJson.data) {
+        setEmailForm((prev) => ({
+          ...prev,
+          provider: emailJson.data.provider ?? "resend",
+          fromEmail: emailJson.data.publicConfig?.fromEmail ?? "",
+          apiKey: "",
+        }));
+      }
+    } catch (error) {
+      setPageMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Gagal memuat settings provider.",
+      });
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -82,87 +128,119 @@ export default function ProviderSettingsPage() {
 
   async function saveWhatsApp(event: React.FormEvent) {
     event.preventDefault();
-    setMessage("");
+    setWaSaving(true);
+    setWaMessage(null);
+    setPageMessage(null);
 
-    const provider = waForm.provider;
-    let payload: Record<string, any> = {
-      provider,
-      publicConfig: {},
-      secretConfig: {},
-    };
-
-    if (provider === "meta_cloud_api") {
-      payload = {
+    try {
+      const provider = waForm.provider;
+      let payload: Record<string, any> = {
         provider,
-        publicConfig: {
-          graphApiVersion: waForm.graphApiVersion,
-          phoneNumberId: waForm.phoneNumberId,
-          businessAccountId: waForm.businessAccountId,
-        },
-        secretConfig: {
-          ...(waForm.accessToken ? { accessToken: waForm.accessToken } : {}),
-          ...(waForm.webhookVerifyToken ? { webhookVerifyToken: waForm.webhookVerifyToken } : {}),
-        },
+        publicConfig: {},
+        secretConfig: {},
       };
+
+      if (provider === "meta_cloud_api") {
+        payload = {
+          provider,
+          publicConfig: {
+            graphApiVersion: waForm.graphApiVersion,
+            phoneNumberId: waForm.phoneNumberId,
+            businessAccountId: waForm.businessAccountId,
+          },
+          secretConfig: {
+            ...(waForm.accessToken ? { accessToken: waForm.accessToken } : {}),
+            ...(waForm.webhookVerifyToken ? { webhookVerifyToken: waForm.webhookVerifyToken } : {}),
+          },
+        };
+      }
+
+      if (provider === "twilio_whatsapp") {
+        payload = {
+          provider,
+          publicConfig: {
+            accountSid: waForm.accountSid,
+            fromNumber: waForm.fromNumber,
+          },
+          secretConfig: {
+            ...(waForm.authToken ? { authToken: waForm.authToken } : {}),
+          },
+        };
+      }
+
+      if (provider === "custom_http") {
+        payload = {
+          provider,
+          publicConfig: {
+            baseUrl: waForm.baseUrl,
+            sender: waForm.sender,
+            extraHeadersJson: waForm.extraHeadersJson,
+          },
+          secretConfig: {
+            ...(waForm.apiKey ? { apiKey: waForm.apiKey } : {}),
+          },
+        };
+      }
+
+      const response = await fetch("/api/settings/whatsapp", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await parseResponse(response);
+
+      if (!response.ok) {
+        throw new Error(json.error ?? "Gagal menyimpan settings WhatsApp.");
+      }
+
+      setWaMessage({ type: "success", text: "Settings WhatsApp tersimpan." });
+      await loadData();
+    } catch (error) {
+      setWaMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Gagal menyimpan settings WhatsApp.",
+      });
+    } finally {
+      setWaSaving(false);
     }
-
-    if (provider === "twilio_whatsapp") {
-      payload = {
-        provider,
-        publicConfig: {
-          accountSid: waForm.accountSid,
-          fromNumber: waForm.fromNumber,
-        },
-        secretConfig: {
-          ...(waForm.authToken ? { authToken: waForm.authToken } : {}),
-        },
-      };
-    }
-
-    if (provider === "custom_http") {
-      payload = {
-        provider,
-        publicConfig: {
-          baseUrl: waForm.baseUrl,
-          sender: waForm.sender,
-          extraHeadersJson: waForm.extraHeadersJson,
-        },
-        secretConfig: {
-          ...(waForm.apiKey ? { apiKey: waForm.apiKey } : {}),
-        },
-      };
-    }
-
-    const response = await fetch("/api/settings/whatsapp", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const json = await response.json();
-    setMessage(response.ok ? "Settings WhatsApp tersimpan." : json.error ?? "Gagal menyimpan settings WhatsApp.");
-    await loadData();
   }
 
   async function saveEmail(event: React.FormEvent) {
     event.preventDefault();
-    setMessage("");
+    setEmailSaving(true);
+    setEmailMessage(null);
+    setPageMessage(null);
 
-    const response = await fetch("/api/settings/email", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: "resend",
-        publicConfig: { fromEmail: emailForm.fromEmail },
-        secretConfig: {
-          ...(emailForm.apiKey ? { apiKey: emailForm.apiKey } : {}),
-        },
-      }),
-    });
+    try {
+      const response = await fetch("/api/settings/email", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "resend",
+          publicConfig: { fromEmail: emailForm.fromEmail },
+          secretConfig: {
+            ...(emailForm.apiKey ? { apiKey: emailForm.apiKey } : {}),
+          },
+        }),
+      });
 
-    const json = await response.json();
-    setMessage(response.ok ? "Settings email tersimpan." : json.error ?? "Gagal menyimpan settings email.");
-    await loadData();
+      const json = await parseResponse(response);
+
+      if (!response.ok) {
+        throw new Error(json.error ?? "Gagal menyimpan settings email.");
+      }
+
+      setEmailMessage({ type: "success", text: "Settings email tersimpan." });
+      await loadData();
+    } catch (error) {
+      setEmailMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Gagal menyimpan settings email.",
+      });
+    } finally {
+      setEmailSaving(false);
+    }
   }
 
   return (
@@ -172,9 +250,15 @@ export default function ProviderSettingsPage() {
         subtitle="Pilih provider WhatsApp langsung dari panel ini. Tidak perlu bongkar kode."
       />
 
-      {message ? (
-        <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-soft">
-          {message}
+      {pageMessage ? (
+        <div
+          className={`mb-6 rounded-2xl border px-4 py-3 text-sm shadow-soft ${
+            pageMessage.type === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+        >
+          {pageMessage.text}
         </div>
       ) : null}
 
@@ -187,10 +271,26 @@ export default function ProviderSettingsPage() {
             </p>
           </CardHeader>
           <CardContent>
+            {waMessage ? (
+              <div
+                className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
+                  waMessage.type === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+              >
+                {waMessage.text}
+              </div>
+            ) : null}
+
             <form className="space-y-4" onSubmit={saveWhatsApp}>
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">Provider</label>
-                <Select value={waForm.provider} onChange={(e) => setWaForm((p) => ({ ...p, provider: e.target.value }))}>
+                <Select
+                  value={waForm.provider}
+                  onChange={(e) => setWaForm((p) => ({ ...p, provider: e.target.value }))}
+                  disabled={waSaving || loading}
+                >
                   <option value="meta_cloud_api">Meta Cloud API</option>
                   <option value="twilio_whatsapp">Twilio WhatsApp</option>
                   <option value="custom_http">Custom HTTP Gateway</option>
@@ -201,27 +301,27 @@ export default function ProviderSettingsPage() {
                 <>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Graph API version</label>
-                    <Input value={waForm.graphApiVersion} onChange={(e) => setWaForm((p) => ({ ...p, graphApiVersion: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.graphApiVersion} onChange={(e) => setWaForm((p) => ({ ...p, graphApiVersion: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Phone number ID</label>
-                    <Input value={waForm.phoneNumberId} onChange={(e) => setWaForm((p) => ({ ...p, phoneNumberId: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.phoneNumberId} onChange={(e) => setWaForm((p) => ({ ...p, phoneNumberId: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Business account ID</label>
-                    <Input value={waForm.businessAccountId} onChange={(e) => setWaForm((p) => ({ ...p, businessAccountId: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.businessAccountId} onChange={(e) => setWaForm((p) => ({ ...p, businessAccountId: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">
                       Access token {wa?.secretFieldsStored?.accessToken ? "(sudah tersimpan)" : ""}
                     </label>
-                    <Input value={waForm.accessToken} onChange={(e) => setWaForm((p) => ({ ...p, accessToken: e.target.value }))} />
+                    <Input disabled={waSaving || loading} type="password" value={waForm.accessToken} onChange={(e) => setWaForm((p) => ({ ...p, accessToken: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">
                       Webhook verify token {wa?.secretFieldsStored?.webhookVerifyToken ? "(sudah tersimpan)" : ""}
                     </label>
-                    <Input value={waForm.webhookVerifyToken} onChange={(e) => setWaForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} />
+                    <Input disabled={waSaving || loading} type="password" value={waForm.webhookVerifyToken} onChange={(e) => setWaForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} />
                   </div>
                 </>
               ) : null}
@@ -230,19 +330,19 @@ export default function ProviderSettingsPage() {
                 <>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Account SID</label>
-                    <Input value={waForm.accountSid} onChange={(e) => setWaForm((p) => ({ ...p, accountSid: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.accountSid} onChange={(e) => setWaForm((p) => ({ ...p, accountSid: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">
                       Auth token {wa?.secretFieldsStored?.authToken ? "(sudah tersimpan)" : ""}
                     </label>
-                    <Input value={waForm.authToken} onChange={(e) => setWaForm((p) => ({ ...p, authToken: e.target.value }))} />
+                    <Input disabled={waSaving || loading} type="password" value={waForm.authToken} onChange={(e) => setWaForm((p) => ({ ...p, authToken: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">
                       From number (format whatsapp:+14155238886)
                     </label>
-                    <Input value={waForm.fromNumber} onChange={(e) => setWaForm((p) => ({ ...p, fromNumber: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.fromNumber} onChange={(e) => setWaForm((p) => ({ ...p, fromNumber: e.target.value }))} />
                   </div>
                 </>
               ) : null}
@@ -251,26 +351,28 @@ export default function ProviderSettingsPage() {
                 <>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Base URL</label>
-                    <Input value={waForm.baseUrl} onChange={(e) => setWaForm((p) => ({ ...p, baseUrl: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.baseUrl} onChange={(e) => setWaForm((p) => ({ ...p, baseUrl: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">
                       API key {wa?.secretFieldsStored?.apiKey ? "(sudah tersimpan)" : ""}
                     </label>
-                    <Input value={waForm.apiKey} onChange={(e) => setWaForm((p) => ({ ...p, apiKey: e.target.value }))} />
+                    <Input disabled={waSaving || loading} type="password" value={waForm.apiKey} onChange={(e) => setWaForm((p) => ({ ...p, apiKey: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Sender</label>
-                    <Input value={waForm.sender} onChange={(e) => setWaForm((p) => ({ ...p, sender: e.target.value }))} />
+                    <Input disabled={waSaving || loading} value={waForm.sender} onChange={(e) => setWaForm((p) => ({ ...p, sender: e.target.value }))} />
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">Extra headers JSON</label>
-                    <Textarea value={waForm.extraHeadersJson} onChange={(e) => setWaForm((p) => ({ ...p, extraHeadersJson: e.target.value }))} />
+                    <Textarea disabled={waSaving || loading} value={waForm.extraHeadersJson} onChange={(e) => setWaForm((p) => ({ ...p, extraHeadersJson: e.target.value }))} />
                   </div>
                 </>
               ) : null}
 
-              <Button type="submit">Simpan settings WhatsApp</Button>
+              <Button type="submit" disabled={waSaving || loading}>
+                {waSaving ? "Menyimpan WhatsApp..." : "Simpan settings WhatsApp"}
+              </Button>
             </form>
 
             <div className="mt-6 rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-600">
@@ -287,6 +389,18 @@ export default function ProviderSettingsPage() {
             <p className="mt-1 text-sm text-slate-500">Default provider: Resend.</p>
           </CardHeader>
           <CardContent>
+            {emailMessage ? (
+              <div
+                className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
+                  emailMessage.type === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+              >
+                {emailMessage.text}
+              </div>
+            ) : null}
+
             <form className="space-y-4" onSubmit={saveEmail}>
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">Provider</label>
@@ -294,16 +408,18 @@ export default function ProviderSettingsPage() {
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">From email</label>
-                <Input value={emailForm.fromEmail} onChange={(e) => setEmailForm((p) => ({ ...p, fromEmail: e.target.value }))} />
+                <Input disabled={emailSaving || loading} value={emailForm.fromEmail} onChange={(e) => setEmailForm((p) => ({ ...p, fromEmail: e.target.value }))} />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700">
                   API key {email?.secretFieldsStored?.apiKey ? "(sudah tersimpan)" : ""}
                 </label>
-                <Input value={emailForm.apiKey} onChange={(e) => setEmailForm((p) => ({ ...p, apiKey: e.target.value }))} />
+                <Input disabled={emailSaving || loading} type="password" value={emailForm.apiKey} onChange={(e) => setEmailForm((p) => ({ ...p, apiKey: e.target.value }))} />
               </div>
 
-              <Button type="submit">Simpan settings Email</Button>
+              <Button type="submit" disabled={emailSaving || loading}>
+                {emailSaving ? "Menyimpan Email..." : "Simpan settings Email"}
+              </Button>
             </form>
 
             <div className="mt-6 rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-600">
