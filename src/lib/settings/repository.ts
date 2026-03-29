@@ -12,28 +12,37 @@ type ProviderSettingsRow = {
   updated_at: string;
 };
 
-function cleanSecrets(input?: Record<string, unknown>) {
-  if (!input) return {};
+type PgLikeError = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
 
+function compactObject(input: Record<string, unknown> | undefined) {
   return Object.fromEntries(
-    Object.entries(input).filter(([, value]) => {
-      if (value === null || value === undefined) return false;
-      if (typeof value === "string") return value.trim().length > 0;
-      return true;
-    })
+    Object.entries(input ?? {}).filter(([, value]) => value !== undefined)
   );
 }
 
-function humanizeRepositoryError(error: unknown) {
-  if (error instanceof Error) {
-    if (error.message.includes("APP_ENCRYPTION_KEY")) {
-      return "APP_ENCRYPTION_KEY belum diisi di Vercel Environment Variables. Isi minimal 32 karakter lalu redeploy.";
-    }
+function isMissingColumnError(error: PgLikeError, columnName: string) {
+  const haystack = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+  return haystack.includes(`column \"${columnName.toLowerCase()}\"`) || haystack.includes(columnName.toLowerCase());
+}
 
-    return error.message;
+export function toReadableErrorMessage(error: unknown, fallback = "Terjadi kesalahan.") {
+  if (error instanceof Error) return error.message;
+
+  if (error && typeof error === "object") {
+    const candidate = error as PgLikeError;
+
+    if (candidate.message || candidate.details || candidate.hint) {
+      const parts = [candidate.message, candidate.details, candidate.hint].filter(Boolean);
+      return parts.join(" | ");
+    }
   }
 
-  return "Terjadi kesalahan saat menyimpan provider settings.";
+  return fallback;
 }
 
 export async function getChannelSetting(channel: ChannelKey) {
@@ -63,36 +72,52 @@ export async function upsertChannelSetting(params: {
   secretConfig?: Record<string, unknown>;
   updatedBy: string;
 }) {
-  try {
-    const existingSecrets = (await getChannelSettingSecrets(params.channel)) ?? {};
-    const mergedSecrets = {
-      ...existingSecrets,
-      ...cleanSecrets(params.secretConfig),
-    };
+  const existingSecrets = (await getChannelSettingSecrets(params.channel)) ?? {};
+  const mergedSecrets = compactObject({
+    ...existingSecrets,
+    ...(params.secretConfig ?? {}),
+  });
 
-    const admin = createSupabaseAdminClient();
-    const { data, error } = await admin
-      .from("provider_settings")
-      .upsert(
-        {
-          channel: params.channel,
-          provider: params.provider,
-          public_config: params.publicConfig,
-          secret_payload_encrypted: Object.keys(mergedSecrets).length
-            ? encryptJson(mergedSecrets)
-            : null,
-          updated_by: params.updatedBy,
-        },
-        { onConflict: "channel" }
-      )
-      .select("*")
-      .single();
+  const payloadBase = {
+    channel: params.channel,
+    provider: params.provider,
+    public_config: compactObject(params.publicConfig),
+    secret_payload_encrypted: Object.keys(mergedSecrets).length ? encryptJson(mergedSecrets) : null,
+  };
 
-    if (error) throw error;
-    return data as ProviderSettingsRow;
-  } catch (error) {
-    throw new Error(humanizeRepositoryError(error));
+  const admin = createSupabaseAdminClient();
+
+  const firstAttempt = await admin
+    .from("provider_settings")
+    .upsert(
+      {
+        ...payloadBase,
+        updated_by: params.updatedBy,
+      },
+      { onConflict: "channel" }
+    )
+    .select("*")
+    .single();
+
+  if (!firstAttempt.error) {
+    return firstAttempt.data as ProviderSettingsRow;
   }
+
+  if (!isMissingColumnError(firstAttempt.error, "updated_by")) {
+    throw firstAttempt.error;
+  }
+
+  const fallbackAttempt = await admin
+    .from("provider_settings")
+    .upsert(payloadBase, { onConflict: "channel" })
+    .select("*")
+    .single();
+
+  if (fallbackAttempt.error) {
+    throw fallbackAttempt.error;
+  }
+
+  return fallbackAttempt.data as ProviderSettingsRow;
 }
 
 export async function getMaskedSettings(channel: ChannelKey) {

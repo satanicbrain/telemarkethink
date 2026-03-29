@@ -35,20 +35,20 @@ export default function LoginPage() {
         <div className="text-xs uppercase tracking-[0.3em] text-brand-100">TelemarkeTHINK</div>
         <div className="max-w-xl">
           <h1 className="text-5xl font-semibold leading-tight">
-            WA & Email automation yang rapi untuk bisnis asuransi.
+            WA & Email automation untuk bisnis asuransi.
           </h1>
           <p className="mt-5 text-lg text-brand-100">
-            Fokus pada komunikasi personal, follow up yang sopan, dan pengelolaan provider tanpa bongkar kode.
+            Fokus pada personal, follow up yang sopan, dan managemen nasabah.
           </p>
         </div>
-        <div className="text-sm text-brand-100">Deploy di Vercel. Data dan auth di Supabase.</div>
+        <div className="text-sm text-brand-100">Deploy with ❤️.</div>
       </section>
 
       <section className="flex items-center justify-center p-6 lg:p-10">
         <Card className="w-full max-w-md">
           <CardHeader>
-            <div className="text-sm uppercase tracking-[0.25em] text-slate-500">Admin Access</div>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-900">Masuk ke dashboard</h2>
+            <div className="text-sm uppercase tracking-[0.25em] text-slate-500">Login</div>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-900"></h2>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={onSubmit}>
