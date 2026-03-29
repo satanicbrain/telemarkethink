@@ -359,7 +359,11 @@ export default function WaTemplatesPage() {
                     <span key={variable} className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm">
                       {`{{${variable}}}`}
                     </span>
-                  )) : <span className="text-sm text-slate-500">Belum ada placeholder. Tambahkan seperti {{name}} atau {{due_date}}.</span>}
+                  )) : (
+                    <span className="text-sm text-slate-500">
+                      Belum ada placeholder. Tambahkan seperti {"{{name}}"} atau {"{{due_date}}"}.
+                    </span>
+                  )}
                 </div>
               </div>
 
