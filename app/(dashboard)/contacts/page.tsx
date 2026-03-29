@@ -3,8 +3,7 @@ import { Topbar } from "@/src/components/layout/topbar";
 import { StatCard } from "@/src/components/layout/stat-card";
 import { StudentsTable } from "@/src/components/contacts/students-table";
 import { Card, CardContent, CardHeader } from "@/src/components/ui/card";
-import { Input } from "@/src/components/ui/input";
-import { Button } from "@/src/components/ui/button";
+import { ContactsToolbar } from "@/src/components/contacts/contacts-toolbar";
 import { requirePageUser } from "@/src/lib/auth";
 import { createSupabaseAdminClient } from "@/src/lib/supabase/admin";
 
@@ -173,17 +172,7 @@ export default async function ContactsPage({
       <Topbar
         title="Kontak"
         subtitle="Data siswa dan orang tua untuk aksi komunikasi yang cepat, rapi, dan personal."
-        right={
-          <form className="flex w-full flex-col gap-2 sm:flex-row">
-            <Input
-              name="q"
-              defaultValue={q}
-              placeholder="Cari student, parent, telepon, email, atau alamat"
-              className="min-w-[260px] bg-white"
-            />
-            <Button type="submit">Cari</Button>
-          </form>
-        }
+        right={<ContactsToolbar />}
       />
 
       <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
