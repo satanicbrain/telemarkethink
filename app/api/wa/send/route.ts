@@ -67,20 +67,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Message or template is required." }, { status: 400 });
   }
 
-  const result =
-    template?.provider_template_key && providerContext.provider.sendTemplate
-      ? await providerContext.provider.sendTemplate({
-          to: recipientPhone,
-          templateName: template.provider_template_key,
-          languageCode: template.language_code ?? "id",
-          variables: [],
-          meta: { requestedBy: auth.user.id, studentId: student?.id ?? null },
-        })
-      : await providerContext.provider.sendText({
-          to: recipientPhone,
-          message: message ?? "",
-          meta: { requestedBy: auth.user.id, studentId: student?.id ?? null },
-        });
+  const shouldUseNativeTemplate =
+    providerContext.providerKey === "meta_cloud_api" &&
+    Boolean(template?.provider_template_key) &&
+    Boolean(providerContext.provider.sendTemplate);
+
+  const result = shouldUseNativeTemplate
+    ? await providerContext.provider.sendTemplate!({
+        to: recipientPhone,
+        templateName: template!.provider_template_key,
+        languageCode: template!.language_code ?? "id",
+        variables: [],
+        meta: { requestedBy: auth.user.id, studentId: student?.id ?? null },
+      })
+    : await providerContext.provider.sendText({
+        to: recipientPhone,
+        message: message ?? "",
+        meta: { requestedBy: auth.user.id, studentId: student?.id ?? null },
+      });
 
   const providerResponse = {
     ...asObject(result.raw),

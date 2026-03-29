@@ -343,6 +343,11 @@ export function StudentsTable({
   }
 
   async function sendWhatsApp(row: StudentRow, templateId?: string | null) {
+    if (!row.telephone?.trim()) {
+      setFeedback((current) => ({ ...current, [row.id]: "Nomor WhatsApp siswa belum tersedia." }));
+      return;
+    }
+
     setLoadingId(`wa-${row.id}`);
     setFeedback((current) => ({ ...current, [row.id]: "" }));
 
@@ -364,9 +369,9 @@ export function StudentsTable({
         }),
       });
 
-      const payload = await response.json();
+      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(payload.error || "Gagal kirim WhatsApp.");
+        throw new Error(payload?.error || "Gagal kirim WhatsApp.");
       }
 
       appendLocalHistory(row, "whatsapp", "sent", { body: previewBody, provider: payload?.data?.provider ?? "whatsapp" });
@@ -381,7 +386,10 @@ export function StudentsTable({
   }
 
   async function sendEmail(row: StudentRow, templateId?: string | null) {
-    if (!row.email) return;
+    if (!row.email?.trim()) {
+      setFeedback((current) => ({ ...current, [row.id]: "Alamat email siswa belum tersedia." }));
+      return;
+    }
 
     setLoadingId(`email-${row.id}`);
     setFeedback((current) => ({ ...current, [row.id]: "" }));
@@ -408,9 +416,9 @@ export function StudentsTable({
         }),
       });
 
-      const payload = await response.json();
+      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(payload.error || "Gagal kirim email.");
+        throw new Error(payload?.error || "Gagal kirim email.");
       }
 
       appendLocalHistory(row, "email", "sent", { subject: previewSubject, body: stripHtml(previewBody), provider: payload?.data?.provider ?? "resend" });
@@ -480,6 +488,8 @@ export function StudentsTable({
   const waPreview = selectedRow && selectedWaTemplate ? renderInlineTemplate(selectedWaTemplate.body_template, getVariables(selectedRow)) : null;
   const emailPreviewSubject = selectedRow && selectedEmailTemplate ? renderInlineTemplate(selectedEmailTemplate.subject_template, getVariables(selectedRow)) : null;
   const emailPreviewHtml = selectedRow && selectedEmailTemplate ? renderInlineTemplate(selectedEmailTemplate.html_template, getVariables(selectedRow)) : null;
+  const selectedRowCanSendWa = Boolean(selectedRow?.telephone?.trim());
+  const selectedRowCanSendEmail = Boolean(selectedRow?.email?.trim());
 
   return (
     <>
@@ -505,6 +515,8 @@ export function StudentsTable({
             {tableRows.map((row) => {
               const waLoading = loadingId === `wa-${row.id}`;
               const emailLoading = loadingId === `email-${row.id}`;
+              const canSendWa = Boolean(row.telephone?.trim());
+              const canSendEmail = Boolean(row.email?.trim());
 
               return (
                 <tr
@@ -541,12 +553,13 @@ export function StudentsTable({
                   </td>
                   <td className="py-4 pr-4">
                     <div className="flex min-w-[180px] flex-col gap-2" onClick={(event) => event.stopPropagation()}>
-                      <Button type="button" onClick={() => sendWhatsApp(row)} disabled={!row.whatsapp_opt_in || waLoading} className="justify-center">
+                      <Button type="button" onClick={() => sendWhatsApp(row)} disabled={!canSendWa || waLoading} className="justify-center">
                         {waLoading ? "Mengirim WA..." : "Kirim WA"}
                       </Button>
-                      <Button type="button" variant="secondary" onClick={() => sendEmail(row)} disabled={!row.email_opt_in || !row.email || emailLoading} className="justify-center">
+                      <Button type="button" variant="secondary" onClick={() => sendEmail(row)} disabled={!canSendEmail || emailLoading} className="justify-center">
                         {emailLoading ? "Mengirim Email..." : "Kirim Email"}
                       </Button>
+                      {!row.whatsapp_opt_in || !row.email_opt_in ? <div className="text-[11px] text-amber-600">Manual send tetap aktif walau opt-in belum dicentang.</div> : null}
                       {feedback[row.id] ? <div className="text-xs text-slate-500">{feedback[row.id]}</div> : null}
                     </div>
                   </td>
@@ -671,10 +684,10 @@ export function StudentsTable({
                           <p className="mt-1 text-sm text-slate-500">Aksi langsung ke kontak ini tanpa perlu menutup popup.</p>
                         </div>
                         <div className="flex flex-wrap gap-3">
-                          <Button type="button" onClick={() => sendWhatsApp(selectedRow)} disabled={!selectedRow.whatsapp_opt_in || loadingId === `wa-${selectedRow.id}`}>
+                          <Button type="button" onClick={() => sendWhatsApp(selectedRow)} disabled={!selectedRowCanSendWa || loadingId === `wa-${selectedRow.id}`}>
                             {loadingId === `wa-${selectedRow.id}` ? "Mengirim WA..." : "Send WA"}
                           </Button>
-                          <Button type="button" variant="secondary" onClick={() => sendEmail(selectedRow)} disabled={!selectedRow.email_opt_in || !selectedRow.email || loadingId === `email-${selectedRow.id}`}>
+                          <Button type="button" variant="secondary" onClick={() => sendEmail(selectedRow)} disabled={!selectedRowCanSendEmail || loadingId === `email-${selectedRow.id}`}>
                             {loadingId === `email-${selectedRow.id}` ? "Mengirim Email..." : "Send Email"}
                           </Button>
                         </div>
@@ -682,6 +695,12 @@ export function StudentsTable({
 
                       {feedback[selectedRow.id] ? (
                         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">{feedback[selectedRow.id]}</div>
+                      ) : null}
+
+                      {!selectedRow.whatsapp_opt_in || !selectedRow.email_opt_in ? (
+                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                          Tombol kirim manual sudah diaktifkan. Data opt-in tetap ditampilkan sebagai referensi, tetapi tidak lagi mengunci aksi kirim manual.
+                        </div>
                       ) : null}
                     </div>
 
@@ -706,7 +725,7 @@ export function StudentsTable({
                       </div>
 
                       <div className="mt-4 flex justify-end">
-                        <Button type="button" onClick={() => sendWhatsApp(selectedRow, selectedWaTemplate?.id ?? null)} disabled={!selectedRow.whatsapp_opt_in || !selectedWaTemplate || loadingId === `wa-${selectedRow.id}`}>
+                        <Button type="button" onClick={() => sendWhatsApp(selectedRow, selectedWaTemplate?.id ?? null)} disabled={!selectedRowCanSendWa || !selectedWaTemplate || loadingId === `wa-${selectedRow.id}`}>
                           {loadingId === `wa-${selectedRow.id}` ? "Mengirim WA..." : "Kirim dari template WA"}
                         </Button>
                       </div>
@@ -734,7 +753,7 @@ export function StudentsTable({
                       </div>
 
                       <div className="mt-4 flex justify-end">
-                        <Button type="button" variant="secondary" onClick={() => sendEmail(selectedRow, selectedEmailTemplate?.id ?? null)} disabled={!selectedRow.email_opt_in || !selectedRow.email || !selectedEmailTemplate || loadingId === `email-${selectedRow.id}`}>
+                        <Button type="button" variant="secondary" onClick={() => sendEmail(selectedRow, selectedEmailTemplate?.id ?? null)} disabled={!selectedRowCanSendEmail || !selectedEmailTemplate || loadingId === `email-${selectedRow.id}`}>
                           {loadingId === `email-${selectedRow.id}` ? "Mengirim Email..." : "Kirim dari template Email"}
                         </Button>
                       </div>
