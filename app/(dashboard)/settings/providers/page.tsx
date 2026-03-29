@@ -302,12 +302,18 @@ export default function ProviderSettingsPage() {
                       Auth token {wa?.secretFieldsStored?.authToken ? "(sudah tersimpan)" : ""}
                     </label>
                     <Input value={waForm.authToken} onChange={(e) => setWaForm((p) => ({ ...p, authToken: e.target.value }))} />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Opsional di form ini. Boleh dikosongkan kalau kamu isi env <code>TWILIO_AUTH_TOKEN</code> di Vercel.
+                    </p>
                   </div>
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-700">
                       From number (format whatsapp:+14155238886)
                     </label>
                     <Input value={waForm.fromNumber} onChange={(e) => setWaForm((p) => ({ ...p, fromNumber: e.target.value }))} />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Bisa juga pakai env <code>TWILIO_ACCOUNT_SID</code> dan <code>TWILIO_WHATSAPP_FROM</code> kalau belum ingin menyimpan lewat database.
+                    </p>
                   </div>
                 </>
               ) : null}
