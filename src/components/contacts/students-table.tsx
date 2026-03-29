@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardContent } from "@/src/components/ui/card";
+import { Input, Textarea } from "@/src/components/ui/input";
+import { Select } from "@/src/components/ui/select";
 import { cn } from "@/src/lib/cn";
 
 type StudentRow = {
@@ -47,6 +49,56 @@ type MessageHistory = {
   sent_at: string | null;
   created_at: string;
 };
+
+type StudentForm = {
+  student_name: string;
+  nick_name: string;
+  parent: string;
+  birthday: string;
+  gender: string;
+  address: string;
+  telephone: string;
+  email: string;
+  birthday_date: string;
+  whatsapp_opt_in: boolean;
+  email_opt_in: boolean;
+};
+
+function parseDateOnly(value: string | null) {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
+function getJakartaTodayParts() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value ?? 0),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? 0),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? 0),
+  };
+}
+
+function calculateAge(birthdayDate: string | null) {
+  const birth = parseDateOnly(birthdayDate);
+  if (!birth) return null;
+
+  const today = getJakartaTodayParts();
+  let age = today.year - birth.year;
+
+  if (today.month < birth.month || (today.month === birth.month && today.day < birth.day)) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
 
 function Badge({ active, label }: { active: boolean; label: string }) {
   return (
@@ -146,6 +198,22 @@ function CopyButton({ value, label }: { value: string | null; label: string }) {
   );
 }
 
+function toForm(row: StudentRow): StudentForm {
+  return {
+    student_name: row.student_name,
+    nick_name: row.nick_name ?? "",
+    parent: row.parent ?? "",
+    birthday: row.birthday ?? "",
+    gender: row.gender ?? "",
+    address: row.address ?? "",
+    telephone: row.telephone,
+    email: row.email ?? "",
+    birthday_date: row.birthday_date ?? "",
+    whatsapp_opt_in: row.whatsapp_opt_in,
+    email_opt_in: row.email_opt_in,
+  };
+}
+
 export function StudentsTable({
   rows,
   waTemplates,
@@ -157,14 +225,34 @@ export function StudentsTable({
   emailTemplates: EmailTemplate[];
   recentLogs: MessageHistory[];
 }) {
+  const [tableRows, setTableRows] = useState<StudentRow[]>(rows);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [selectedRow, setSelectedRow] = useState<StudentRow | null>(null);
   const [selectedWaTemplateId, setSelectedWaTemplateId] = useState<string | null>(waTemplates[0]?.id ?? null);
   const [selectedEmailTemplateId, setSelectedEmailTemplateId] = useState<string | null>(emailTemplates[0]?.id ?? null);
   const [historyLogs, setHistoryLogs] = useState<MessageHistory[]>(recentLogs);
+  const [editMode, setEditMode] = useState(false);
+  const [savingStudent, setSavingStudent] = useState(false);
+  const [studentForm, setStudentForm] = useState<StudentForm | null>(selectedRow ? toForm(selectedRow) : null);
 
-  const sortedRows = useMemo(() => rows, [rows]);
+  useEffect(() => {
+    setTableRows(rows);
+  }, [rows]);
+
+  useEffect(() => {
+    setHistoryLogs(recentLogs);
+  }, [recentLogs]);
+
+  useEffect(() => {
+    if (!selectedRow) {
+      setEditMode(false);
+      setStudentForm(null);
+      return;
+    }
+
+    setStudentForm(toForm(selectedRow));
+  }, [selectedRow]);
 
   useEffect(() => {
     if (!selectedRow) return;
@@ -204,6 +292,11 @@ export function StudentsTable({
     () => emailTemplates.find((template) => template.id === selectedEmailTemplateId) ?? emailTemplates[0] ?? null,
     [emailTemplates, selectedEmailTemplateId]
   );
+
+  function openDetail(row: StudentRow) {
+    setSelectedRow(row);
+    setEditMode(false);
+  }
 
   function getVariables(row: StudentRow) {
     return {
@@ -281,10 +374,7 @@ export function StudentsTable({
     } catch (error) {
       const message = error instanceof Error ? error.message : "Gagal kirim WhatsApp.";
       appendLocalHistory(row, "whatsapp", "failed", { body: message, provider: "whatsapp" });
-      setFeedback((current) => ({
-        ...current,
-        [row.id]: message,
-      }));
+      setFeedback((current) => ({ ...current, [row.id]: message }));
     } finally {
       setLoadingId(null);
     }
@@ -328,12 +418,45 @@ export function StudentsTable({
     } catch (error) {
       const message = error instanceof Error ? error.message : "Gagal kirim email.";
       appendLocalHistory(row, "email", "failed", { subject: null, body: message, provider: "resend" });
-      setFeedback((current) => ({
-        ...current,
-        [row.id]: message,
-      }));
+      setFeedback((current) => ({ ...current, [row.id]: message }));
     } finally {
       setLoadingId(null);
+    }
+  }
+
+  async function saveStudent() {
+    if (!selectedRow || !studentForm) return;
+
+    setSavingStudent(true);
+    setFeedback((current) => ({ ...current, [selectedRow.id]: "" }));
+
+    try {
+      const response = await fetch(`/api/students/${selectedRow.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(studentForm),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Gagal menyimpan data siswa.");
+      }
+
+      const updatedBase = payload.data as Omit<StudentRow, "age">;
+      const updatedRow: StudentRow = {
+        ...updatedBase,
+        age: calculateAge(updatedBase.birthday_date ?? null),
+      };
+
+      setTableRows((current) => current.map((row) => (row.id === updatedRow.id ? updatedRow : row)));
+      setSelectedRow(updatedRow);
+      setFeedback((current) => ({ ...current, [updatedRow.id]: "Data siswa berhasil diperbarui." }));
+      setEditMode(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Gagal menyimpan data siswa.";
+      setFeedback((current) => ({ ...current, [selectedRow.id]: message }));
+    } finally {
+      setSavingStudent(false);
     }
   }
 
@@ -354,17 +477,9 @@ export function StudentsTable({
     }).slice(0, 8);
   }, [historyLogs, selectedRow]);
 
-  const waPreview = selectedRow && selectedWaTemplate
-    ? renderInlineTemplate(selectedWaTemplate.body_template, getVariables(selectedRow))
-    : null;
-
-  const emailPreviewSubject = selectedRow && selectedEmailTemplate
-    ? renderInlineTemplate(selectedEmailTemplate.subject_template, getVariables(selectedRow))
-    : null;
-
-  const emailPreviewHtml = selectedRow && selectedEmailTemplate
-    ? renderInlineTemplate(selectedEmailTemplate.html_template, getVariables(selectedRow))
-    : null;
+  const waPreview = selectedRow && selectedWaTemplate ? renderInlineTemplate(selectedWaTemplate.body_template, getVariables(selectedRow)) : null;
+  const emailPreviewSubject = selectedRow && selectedEmailTemplate ? renderInlineTemplate(selectedEmailTemplate.subject_template, getVariables(selectedRow)) : null;
+  const emailPreviewHtml = selectedRow && selectedEmailTemplate ? renderInlineTemplate(selectedEmailTemplate.html_template, getVariables(selectedRow)) : null;
 
   return (
     <>
@@ -387,7 +502,7 @@ export function StudentsTable({
             </tr>
           </thead>
           <tbody>
-            {sortedRows.map((row) => {
+            {tableRows.map((row) => {
               const waLoading = loadingId === `wa-${row.id}`;
               const emailLoading = loadingId === `email-${row.id}`;
 
@@ -396,11 +511,11 @@ export function StudentsTable({
                   key={row.id}
                   tabIndex={0}
                   role="button"
-                  onClick={() => setSelectedRow(row)}
+                  onClick={() => openDetail(row)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      setSelectedRow(row);
+                      openDetail(row);
                     }
                   }}
                   className="cursor-pointer border-b border-slate-100 align-top transition hover:bg-brand-50/40 focus:outline-none focus:ring-2 focus:ring-brand-300"
@@ -411,14 +526,10 @@ export function StudentsTable({
                   </td>
                   <td className="py-4 pr-4 text-slate-600">{row.nick_name || "-"}</td>
                   <td className="py-4 pr-4 text-slate-600">{row.parent || "-"}</td>
-                  <td className="py-4 pr-4 text-slate-600">
-                    <div>{row.birthday || (row.birthday_date ? formatDate(row.birthday_date) : "-")}</div>
-                  </td>
+                  <td className="py-4 pr-4 text-slate-600">{row.birthday || (row.birthday_date ? formatDate(row.birthday_date) : "-")}</td>
                   <td className="py-4 pr-4 text-slate-600">{row.age ?? "-"}</td>
                   <td className="py-4 pr-4 text-slate-600">{row.gender || "-"}</td>
-                  <td className="py-4 pr-4 text-slate-600">
-                    <div className="max-w-[220px] whitespace-normal break-words">{row.address || "-"}</div>
-                  </td>
+                  <td className="py-4 pr-4 text-slate-600"><div className="max-w-[220px] whitespace-normal break-words">{row.address || "-"}</div></td>
                   <td className="py-4 pr-4 text-slate-600">{row.telephone}</td>
                   <td className="py-4 pr-4 text-slate-600">{row.email || "-"}</td>
                   <td className="py-4 pr-4 text-slate-600">{formatDate(row.created_at)}</td>
@@ -430,21 +541,10 @@ export function StudentsTable({
                   </td>
                   <td className="py-4 pr-4">
                     <div className="flex min-w-[180px] flex-col gap-2" onClick={(event) => event.stopPropagation()}>
-                      <Button
-                        type="button"
-                        onClick={() => sendWhatsApp(row)}
-                        disabled={!row.whatsapp_opt_in || waLoading}
-                        className="justify-center"
-                      >
+                      <Button type="button" onClick={() => sendWhatsApp(row)} disabled={!row.whatsapp_opt_in || waLoading} className="justify-center">
                         {waLoading ? "Mengirim WA..." : "Kirim WA"}
                       </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => sendEmail(row)}
-                        disabled={!row.email_opt_in || !row.email || emailLoading}
-                        className="justify-center"
-                      >
+                      <Button type="button" variant="secondary" onClick={() => sendEmail(row)} disabled={!row.email_opt_in || !row.email || emailLoading} className="justify-center">
                         {emailLoading ? "Mengirim Email..." : "Kirim Email"}
                       </Button>
                       {feedback[row.id] ? <div className="text-xs text-slate-500">{feedback[row.id]}</div> : null}
@@ -457,7 +557,7 @@ export function StudentsTable({
         </table>
       </div>
 
-      {selectedRow ? (
+      {selectedRow && studentForm ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={() => setSelectedRow(null)} />
           <Card className="relative z-10 max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-[2rem] border-slate-200 shadow-2xl">
@@ -471,9 +571,7 @@ export function StudentsTable({
                     <div>
                       <div className="text-xs uppercase tracking-[0.28em] text-brand-100">Detail siswa</div>
                       <h3 className="mt-2 text-2xl font-semibold leading-tight">{selectedRow.student_name}</h3>
-                      <p className="mt-1 text-sm text-brand-100">
-                        {selectedRow.parent ? `Orang tua: ${selectedRow.parent}` : "Profil kontak siswa"}
-                      </p>
+                      <p className="mt-1 text-sm text-brand-100">{selectedRow.parent ? `Orang tua: ${selectedRow.parent}` : "Profil kontak siswa"}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Badge active={selectedRow.whatsapp_opt_in} label={`WhatsApp ${selectedRow.whatsapp_opt_in ? "Opt-in" : "Off"}`} />
                         <Badge active={selectedRow.email_opt_in} label={`Email ${selectedRow.email_opt_in ? "Opt-in" : "Off"}`} />
@@ -481,137 +579,165 @@ export function StudentsTable({
                       </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRow(null)}
-                    className="inline-flex h-11 w-11 items-center justify-center self-end rounded-2xl bg-white/10 text-xl transition hover:bg-white/20 lg:self-start"
-                    aria-label="Close detail"
-                  >
-                    ×
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3 self-end lg:self-start">
+                    <Button type="button" variant="secondary" onClick={() => setEditMode((current) => !current)}>
+                      {editMode ? "Tutup edit" : "Edit data siswa"}
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRow(null)}
+                      className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 text-xl transition hover:bg-white/20"
+                      aria-label="Close detail"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <div className="max-h-[calc(92vh-118px)] overflow-y-auto px-6 py-6">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <DetailItem label="Nama siswa" value={selectedRow.student_name} />
-                  <DetailItem label="Nama panggilan" value={selectedRow.nick_name || "-"} />
-                  <DetailItem label="Orang tua" value={selectedRow.parent || "-"} />
-                  <DetailItem label="Tanggal lahir" value={selectedRow.birthday || formatDate(selectedRow.birthday_date)} />
-                  <DetailItem label="Umur" value={selectedRow.age !== null ? `${selectedRow.age} tahun` : "-"} />
-                  <DetailItem label="Gender" value={selectedRow.gender || "-"} />
-                  <DetailItem label="Telepon" value={selectedRow.telephone} action={<CopyButton value={selectedRow.telephone} label="telepon" />} />
-                  <DetailItem label="Email" value={selectedRow.email || "-"} action={<CopyButton value={selectedRow.email} label="email" />} />
-                  <DetailItem label="Created at" value={formatDate(selectedRow.created_at, true)} />
-                </div>
-
-                <div className="mt-3 grid gap-3 xl:grid-cols-[1.25fr_0.75fr]">
-                  <DetailItem label="Alamat" value={selectedRow.address || "-"} />
-                  <DetailItem label="Aksi cepat" value="Pakai tombol cepat di bawah, atau kirim dengan template yang sudah dipreview." />
-                </div>
-
-                <div className="mt-6 rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div>
-                      <h4 className="text-base font-semibold text-slate-900">Kirim cepat</h4>
-                      <p className="mt-1 text-sm text-slate-500">Aksi langsung ke kontak ini tanpa perlu menutup popup.</p>
+                <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+                  <div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <DetailItem label="Nama siswa" value={selectedRow.student_name} />
+                      <DetailItem label="Nama panggilan" value={selectedRow.nick_name || "-"} />
+                      <DetailItem label="Orang tua" value={selectedRow.parent || "-"} />
+                      <DetailItem label="Tanggal lahir" value={selectedRow.birthday || formatDate(selectedRow.birthday_date)} />
+                      <DetailItem label="Umur" value={selectedRow.age !== null ? `${selectedRow.age} tahun` : "-"} />
+                      <DetailItem label="Gender" value={selectedRow.gender || "-"} />
+                      <DetailItem label="Telepon" value={selectedRow.telephone} action={<CopyButton value={selectedRow.telephone} label="telepon" />} />
+                      <DetailItem label="Email" value={selectedRow.email || "-"} action={<CopyButton value={selectedRow.email} label="email" />} />
+                      <DetailItem label="Created at" value={formatDate(selectedRow.created_at, true)} />
                     </div>
-                    <div className="flex flex-wrap gap-3">
-                      <Button
-                        type="button"
-                        onClick={() => sendWhatsApp(selectedRow)}
-                        disabled={!selectedRow.whatsapp_opt_in || loadingId === `wa-${selectedRow.id}`}
-                        className="min-w-[160px]"
-                      >
-                        {loadingId === `wa-${selectedRow.id}` ? "Mengirim WA..." : "Send WA"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => sendEmail(selectedRow)}
-                        disabled={!selectedRow.email_opt_in || !selectedRow.email || loadingId === `email-${selectedRow.id}`}
-                        className="min-w-[160px]"
-                      >
-                        {loadingId === `email-${selectedRow.id}` ? "Mengirim Email..." : "Send Email"}
-                      </Button>
-                      <Button type="button" variant="ghost" onClick={() => setSelectedRow(null)}>
-                        Tutup
-                      </Button>
-                    </div>
-                  </div>
-                  {feedback[selectedRow.id] ? (
-                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      {feedback[selectedRow.id]}
-                    </div>
-                  ) : null}
-                </div>
 
-                <div className="mt-6 grid gap-4 xl:grid-cols-2">
-                  <div className="rounded-[1.75rem] border border-slate-200 bg-gradient-to-br from-white to-brand-50/40 p-5 shadow-sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h4 className="text-base font-semibold text-slate-900">Preview template WhatsApp</h4>
-                        <p className="mt-1 text-sm text-slate-500">Pilih template, lihat preview, lalu kirim sekali klik.</p>
+                    <div className="mt-3 grid gap-3 xl:grid-cols-[1.25fr_0.75fr]">
+                      <DetailItem label="Alamat" value={selectedRow.address || "-"} />
+                      <DetailItem label="Aksi cepat" value="Kirim WA, email, edit data, lalu lihat histori tanpa keluar dari popup ini." />
+                    </div>
+
+                    {editMode ? (
+                      <div className="mt-6 rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h4 className="text-base font-semibold text-slate-900">Edit data siswa</h4>
+                            <p className="mt-1 text-sm text-slate-500">Perubahan akan langsung memengaruhi tabel kontak dan popup ini.</p>
+                          </div>
+                          <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Live update</div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <Input value={studentForm.student_name} onChange={(e) => setStudentForm((current) => current ? { ...current, student_name: e.target.value } : current)} placeholder="Nama siswa" />
+                          <Input value={studentForm.nick_name} onChange={(e) => setStudentForm((current) => current ? { ...current, nick_name: e.target.value } : current)} placeholder="Nama panggilan" />
+                          <Input value={studentForm.parent} onChange={(e) => setStudentForm((current) => current ? { ...current, parent: e.target.value } : current)} placeholder="Nama orang tua" />
+                          <Input value={studentForm.telephone} onChange={(e) => setStudentForm((current) => current ? { ...current, telephone: e.target.value } : current)} placeholder="Telepon" />
+                          <Input value={studentForm.email} onChange={(e) => setStudentForm((current) => current ? { ...current, email: e.target.value } : current)} placeholder="Email" />
+                          <Input value={studentForm.gender} onChange={(e) => setStudentForm((current) => current ? { ...current, gender: e.target.value } : current)} placeholder="Gender" />
+                          <Input value={studentForm.birthday} onChange={(e) => setStudentForm((current) => current ? { ...current, birthday: e.target.value } : current)} placeholder="Label ulang tahun bebas" />
+                          <Input type="date" value={studentForm.birthday_date} onChange={(e) => setStudentForm((current) => current ? { ...current, birthday_date: e.target.value } : current)} />
+                          <div className="md:col-span-2">
+                            <Textarea value={studentForm.address} onChange={(e) => setStudentForm((current) => current ? { ...current, address: e.target.value } : current)} placeholder="Alamat" className="min-h-[92px]" />
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <label className="flex items-center justify-between gap-3 text-sm text-slate-700">
+                              <span>WhatsApp opt-in</span>
+                              <input type="checkbox" checked={studentForm.whatsapp_opt_in} onChange={(e) => setStudentForm((current) => current ? { ...current, whatsapp_opt_in: e.target.checked } : current)} className="h-4 w-4 rounded border-slate-300" />
+                            </label>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <label className="flex items-center justify-between gap-3 text-sm text-slate-700">
+                              <span>Email opt-in</span>
+                              <input type="checkbox" checked={studentForm.email_opt_in} onChange={(e) => setStudentForm((current) => current ? { ...current, email_opt_in: e.target.checked } : current)} className="h-4 w-4 rounded border-slate-300" />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex justify-end gap-3">
+                          <Button type="button" variant="ghost" onClick={() => { setStudentForm(toForm(selectedRow)); setEditMode(false); }}>
+                            Batal
+                          </Button>
+                          <Button type="button" onClick={saveStudent} disabled={savingStudent}>
+                            {savingStudent ? "Menyimpan..." : "Simpan perubahan"}
+                          </Button>
+                        </div>
                       </div>
-                      <select
-                        value={selectedWaTemplate?.id ?? ""}
-                        onChange={(event) => setSelectedWaTemplateId(event.target.value)}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                      >
-                        {waTemplates.length ? waTemplates.map((template) => (
-                          <option key={template.id} value={template.id}>{template.name}</option>
-                        )) : <option value="">Belum ada template WA</option>}
-                      </select>
-                    </div>
-
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm leading-7 text-slate-700 shadow-sm">
-                      {waPreview || "Belum ada template aktif. Kamu tetap bisa kirim pesan cepat dari tombol di atas."}
-                    </div>
-
-                    <div className="mt-4 flex justify-end">
-                      <Button
-                        type="button"
-                        onClick={() => sendWhatsApp(selectedRow, selectedWaTemplate?.id ?? null)}
-                        disabled={!selectedRow.whatsapp_opt_in || !selectedWaTemplate || loadingId === `wa-${selectedRow.id}`}
-                      >
-                        {loadingId === `wa-${selectedRow.id}` ? "Mengirim WA..." : "Kirim dari template WA"}
-                      </Button>
-                    </div>
+                    ) : null}
                   </div>
 
-                  <div className="rounded-[1.75rem] border border-slate-200 bg-gradient-to-br from-white to-sky-50/50 p-5 shadow-sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div>
+                          <h4 className="text-base font-semibold text-slate-900">Kirim cepat</h4>
+                          <p className="mt-1 text-sm text-slate-500">Aksi langsung ke kontak ini tanpa perlu menutup popup.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                          <Button type="button" onClick={() => sendWhatsApp(selectedRow)} disabled={!selectedRow.whatsapp_opt_in || loadingId === `wa-${selectedRow.id}`}>
+                            {loadingId === `wa-${selectedRow.id}` ? "Mengirim WA..." : "Send WA"}
+                          </Button>
+                          <Button type="button" variant="secondary" onClick={() => sendEmail(selectedRow)} disabled={!selectedRow.email_opt_in || !selectedRow.email || loadingId === `email-${selectedRow.id}`}>
+                            {loadingId === `email-${selectedRow.id}` ? "Mengirim Email..." : "Send Email"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {feedback[selectedRow.id] ? (
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">{feedback[selectedRow.id]}</div>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-6 rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-base font-semibold text-slate-900">Preview template WhatsApp</h4>
+                          <p className="mt-1 text-sm text-slate-500">Pilih template aktif lalu kirim setelah kamu cocok dengan preview-nya.</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <Select value={selectedWaTemplateId ?? ""} onChange={(e) => setSelectedWaTemplateId(e.target.value)}>
+                          {waTemplates.length ? waTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          )) : <option value="">Belum ada template WA</option>}
+                        </Select>
+                      </div>
+
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-700">
+                        {waPreview || "Belum ada template WhatsApp aktif."}
+                      </div>
+
+                      <div className="mt-4 flex justify-end">
+                        <Button type="button" onClick={() => sendWhatsApp(selectedRow, selectedWaTemplate?.id ?? null)} disabled={!selectedRow.whatsapp_opt_in || !selectedWaTemplate || loadingId === `wa-${selectedRow.id}`}>
+                          {loadingId === `wa-${selectedRow.id}` ? "Mengirim WA..." : "Kirim dari template WA"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
                       <div>
                         <h4 className="text-base font-semibold text-slate-900">Preview template Email</h4>
-                        <p className="mt-1 text-sm text-slate-500">Subject dan isi email akan mengikuti data siswa yang dipilih.</p>
+                        <p className="mt-1 text-sm text-slate-500">Gunakan subject dan isi email yang sudah dirender dengan data siswa ini.</p>
                       </div>
-                      <select
-                        value={selectedEmailTemplate?.id ?? ""}
-                        onChange={(event) => setSelectedEmailTemplateId(event.target.value)}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-                      >
-                        {emailTemplates.length ? emailTemplates.map((template) => (
-                          <option key={template.id} value={template.id}>{template.name}</option>
-                        )) : <option value="">Belum ada template Email</option>}
-                      </select>
-                    </div>
 
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-                      <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Subject</div>
-                      <div className="mt-1 text-sm font-semibold text-slate-900">{emailPreviewSubject || "Belum ada template email aktif"}</div>
-                      <div className="mt-4 text-xs uppercase tracking-[0.18em] text-slate-400">Preview isi</div>
-                      <div className="mt-1 text-sm leading-7 text-slate-700">{emailPreviewHtml ? stripHtml(emailPreviewHtml) : "Belum ada template email aktif."}</div>
-                    </div>
+                      <div className="mt-4">
+                        <Select value={selectedEmailTemplateId ?? ""} onChange={(e) => setSelectedEmailTemplateId(e.target.value)}>
+                          {emailTemplates.length ? emailTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          )) : <option value="">Belum ada template Email</option>}
+                        </Select>
+                      </div>
 
-                    <div className="mt-4 flex justify-end">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => sendEmail(selectedRow, selectedEmailTemplate?.id ?? null)}
-                        disabled={!selectedRow.email_opt_in || !selectedRow.email || !selectedEmailTemplate || loadingId === `email-${selectedRow.id}`}
-                      >
-                        {loadingId === `email-${selectedRow.id}` ? "Mengirim Email..." : "Kirim dari template Email"}
-                      </Button>
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Subject</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{emailPreviewSubject || "Belum ada template email aktif"}</div>
+                        <div className="mt-4 text-xs uppercase tracking-[0.18em] text-slate-400">Preview isi</div>
+                        <div className="mt-1 text-sm leading-7 text-slate-700">{emailPreviewHtml ? stripHtml(emailPreviewHtml) : "Belum ada template email aktif."}</div>
+                      </div>
+
+                      <div className="mt-4 flex justify-end">
+                        <Button type="button" variant="secondary" onClick={() => sendEmail(selectedRow, selectedEmailTemplate?.id ?? null)} disabled={!selectedRow.email_opt_in || !selectedRow.email || !selectedEmailTemplate || loadingId === `email-${selectedRow.id}`}>
+                          {loadingId === `email-${selectedRow.id}` ? "Mengirim Email..." : "Kirim dari template Email"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -620,31 +746,30 @@ export function StudentsTable({
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h4 className="text-base font-semibold text-slate-900">Histori pengiriman</h4>
-                      <p className="mt-1 text-sm text-slate-500">Riwayat terbaru yang terhubung ke siswa ini dari log aplikasi.</p>
+                      <p className="mt-1 text-sm text-slate-500">Riwayat pesan terbaru yang terhubung ke siswa, telepon, atau email ini.</p>
                     </div>
-                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{relatedLogs.length} item</div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{relatedLogs.length} log</div>
                   </div>
 
                   <div className="mt-4 space-y-3">
-                    {relatedLogs.length ? relatedLogs.map((log) => {
-                      const success = ["sent", "delivered", "read"].includes(log.status);
-                      return (
-                        <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    {relatedLogs.length ? relatedLogs.map((log) => (
+                      <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <Badge active={success} label={`${log.channel.toUpperCase()} • ${log.status}`} />
-                              <span className="text-xs uppercase tracking-[0.16em] text-slate-400">{log.provider}</span>
+                              <Badge active={log.channel === "whatsapp"} label={log.channel.toUpperCase()} />
+                              <Badge active={log.status === "sent" || log.status === "delivered" || log.status === "read"} label={log.status} />
+                              <span className="text-xs uppercase tracking-[0.18em] text-slate-400">{log.provider}</span>
                             </div>
-                            <div className="text-xs text-slate-500">{formatDate(log.sent_at || log.created_at, true)}</div>
+                            {log.subject ? <div className="mt-3 text-sm font-semibold text-slate-900">{log.subject}</div> : null}
+                            <div className="mt-2 text-sm leading-6 text-slate-600">{log.body_preview || log.error_message || "-"}</div>
                           </div>
-                          {log.subject ? <div className="mt-2 text-sm font-semibold text-slate-900">{log.subject}</div> : null}
-                          <div className="mt-1 text-sm leading-6 text-slate-600">{log.body_preview || "-"}</div>
-                          {log.error_message ? <div className="mt-2 text-xs text-rose-600">{log.error_message}</div> : null}
+                          <div className="shrink-0 text-xs text-slate-400">{formatDate(log.sent_at ?? log.created_at, true)}</div>
                         </div>
-                      );
-                    }) : (
-                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                        Belum ada histori kirim untuk kontak ini. Setelah kirim dari popup atau tabel, log baru akan muncul di sini.
+                      </div>
+                    )) : (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-8 text-center text-sm text-slate-500">
+                        Belum ada histori yang cocok untuk siswa ini.
                       </div>
                     )}
                   </div>

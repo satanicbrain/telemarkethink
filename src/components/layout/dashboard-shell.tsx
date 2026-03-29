@@ -1,25 +1,67 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Sidebar } from "@/src/components/layout/sidebar";
 import { Button } from "@/src/components/ui/button";
+
+type AppRole = "admin" | "operator";
+
+type Viewer = {
+  role: AppRole;
+  email: string | null;
+  fullName: string | null;
+};
 
 export function DashboardShell({
   role,
   email,
   fullName,
+  bootstrapMode,
   children,
 }: {
-  role: "admin" | "operator";
+  role: AppRole;
   email: string | null;
   fullName: string | null;
+  bootstrapMode: boolean;
   children: ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [viewer, setViewer] = useState<Viewer>({ role, email, fullName });
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadViewer() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        const json = await response.json();
+        if (!response.ok || !json?.data || !active) return;
+        setViewer({
+          role: json.data.role,
+          email: json.data.email ?? null,
+          fullName: json.data.fullName ?? null,
+        });
+      } catch {
+        // keep initial server state
+      }
+    }
+
+    loadViewer();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const displayName = useMemo(() => viewer.fullName ?? viewer.email ?? "User", [viewer.email, viewer.fullName]);
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Sidebar role={role} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        role={viewer.role}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        showUsersShortcut={bootstrapMode}
+      />
 
       <div className="min-h-screen">
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur">
@@ -34,8 +76,8 @@ export function DashboardShell({
                 <span className="text-xl leading-none">☰</span>
               </button>
               <div>
-                <div className="text-sm font-semibold text-slate-900">{fullName ?? email ?? "User"}</div>
-                <div className="text-xs uppercase tracking-[0.22em] text-slate-500">{role}</div>
+                <div className="text-sm font-semibold text-slate-900">{displayName}</div>
+                <div className="text-xs uppercase tracking-[0.22em] text-slate-500">{viewer.role}</div>
               </div>
             </div>
 

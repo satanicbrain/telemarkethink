@@ -18,14 +18,16 @@ export function Sidebar({
   role,
   open,
   onClose,
+  showUsersShortcut = false,
 }: {
   role: "admin" | "operator";
   open: boolean;
   onClose: () => void;
+  showUsersShortcut?: boolean;
 }) {
   const pathname = usePathname();
-  const items = role === "admin"
-    ? [...baseItems, { href: "/users", label: "Kelola User" }]
+  const items = role === "admin" || showUsersShortcut
+    ? [...baseItems, { href: "/users", label: showUsersShortcut && role !== "admin" ? "Bootstrap Admin" : "Kelola User" }]
     : baseItems;
 
   if (!open) return null;

@@ -17,16 +17,42 @@ type UserRow = {
   lastSignInAt: string | null;
 };
 
-export function UserManagement({ currentUserId }: { currentUserId: string }) {
+export function UserManagement({
+  currentUserId,
+  currentUserRole,
+  currentUserEmail,
+  currentUserName,
+  canManageUsers,
+  bootstrapMode,
+}: {
+  currentUserId: string;
+  currentUserRole: "admin" | "operator";
+  currentUserEmail: string | null;
+  currentUserName: string | null;
+  canManageUsers: boolean;
+  bootstrapMode: boolean;
+}) {
   const router = useRouter();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    fullName: "",
+    email: "",
+    password: "",
+    role: "operator" as "admin" | "operator",
+  });
 
   async function loadUsers() {
+    if (!canManageUsers) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
 
@@ -48,7 +74,7 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
 
   useEffect(() => {
     loadUsers();
-  }, []);
+  }, [canManageUsers]);
 
   const filteredUsers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -77,7 +103,7 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
       }
 
       setUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, role } : user)));
-      setMessage(`Role berhasil diubah menjadi ${role}.`);
+      setMessage(`Role berhasil diubah menjadi ${role}. Kalau ini akun kamu sendiri, logout lalu login lagi supaya akses ikut segar.`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal mengubah role user.");
@@ -86,11 +112,46 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
     }
   }
 
+  async function createUser(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreating(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw new Error(json.error ?? "Gagal membuat user baru.");
+      }
+
+      const newUser = json.data as UserRow;
+      setUsers((prev) => [newUser, ...prev]);
+      setForm({ fullName: "", email: "", password: "", role: "operator" });
+      setMessage(`User ${newUser.email ?? "baru"} berhasil dibuat sebagai ${newUser.role}.`);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal membuat user baru.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  const currentUser = useMemo(
+    () => users.find((item) => item.id === currentUserId) ?? null,
+    [currentUserId, users]
+  );
+
   return (
     <>
       <Topbar
         title="Kelola User"
-        subtitle="Ubah role admin atau operator langsung dari dashboard tanpa buka SQL Editor."
+        subtitle="Tambah operator atau admin baru, lalu atur rolenya langsung dari dashboard tanpa buka SQL Editor."
         right={
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
@@ -105,6 +166,79 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
           </div>
         }
       />
+
+      <div className="mb-6 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        {!canManageUsers ? (
+          <div className="xl:col-span-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            Halaman ini hanya bisa mengubah user saat kamu sudah admin. Untuk bootstrap admin pertama, pastikan belum ada akun admin sama sekali lalu buka lagi halaman ini. Kalau admin sudah ada, masuklah dengan akun admin itu.
+          </div>
+        ) : null}
+        <Card>
+          <CardHeader>
+            <h2 className="text-lg font-semibold text-slate-900">Akun aktif sekarang</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Ini identitas yang sedang dipakai di dashboard. Kalau role masih belum berubah, biasanya cukup logout lalu login lagi.
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2">
+            <Info label="Nama" value={currentUser?.fullName ?? currentUserName ?? "-"} />
+            <Info label="Email" value={currentUser?.email ?? currentUserEmail ?? "-"} />
+            <Info label="Role sekarang" value={currentUser?.role ?? currentUserRole} accent />
+            <Info label="User ID" value={currentUserId} compact />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <h2 className="text-lg font-semibold text-slate-900">Tambah user baru</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Buat akun login baru sekaligus tentukan apakah dia operator atau admin.
+              {bootstrapMode ? " Saat ini belum ada admin, jadi halaman ini sedang berada di mode bootstrap admin pertama." : ""}
+            </p>
+          </CardHeader>
+          <CardContent>
+            <form className="grid gap-3" onSubmit={createUser}>
+              <Input
+                value={form.fullName}
+                onChange={(e) => setForm((current) => ({ ...current, fullName: e.target.value }))}
+                placeholder="Nama lengkap"
+                required
+                disabled={!canManageUsers || creating}
+              />
+              <Input
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm((current) => ({ ...current, email: e.target.value }))}
+                placeholder="Email login"
+                required
+                disabled={!canManageUsers || creating}
+              />
+              <Input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm((current) => ({ ...current, password: e.target.value }))}
+                placeholder="Password minimal 8 karakter"
+                required
+                minLength={8}
+                disabled={!canManageUsers || creating}
+              />
+              <Select
+                value={form.role}
+                onChange={(e) => setForm((current) => ({ ...current, role: e.target.value as "admin" | "operator" }))}
+                disabled={!canManageUsers || creating}
+              >
+                <option value="operator">operator</option>
+                <option value="admin">admin</option>
+              </Select>
+              <div className="flex justify-end">
+                <Button type="submit" disabled={!canManageUsers || creating}>
+                  {creating ? "Membuat user..." : "Tambah user"}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
       {message ? (
         <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
@@ -122,7 +256,7 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
         <CardHeader>
           <h2 className="text-lg font-semibold text-slate-900">Daftar user</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Role tersimpan di tabel profiles. Setelah diubah, label role di layout akan ikut diperbarui.
+            Role aplikasi tersimpan di tabel <code>profiles</code>. Untuk admin pertama, kamu juga bisa set lewat SQL lalu refresh halaman ini.
           </p>
         </CardHeader>
         <CardContent>
@@ -153,7 +287,7 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
                       <td className="py-3 pr-4">
                         <Select
                           value={user.role}
-                          disabled={savingUserId === user.id}
+                          disabled={!canManageUsers || savingUserId === user.id}
                           onChange={(e) => updateRole(user.id, e.target.value as "admin" | "operator")}
                           className="min-w-[140px]"
                         >
@@ -166,7 +300,7 @@ export function UserManagement({ currentUserId }: { currentUserId: string }) {
                       <td className="py-3">
                         <Button
                           variant="ghost"
-                          disabled={loading || savingUserId === user.id}
+                          disabled={!canManageUsers || loading || savingUserId === user.id}
                           onClick={() => updateRole(user.id, user.role === "admin" ? "operator" : "admin")}
                         >
                           {savingUserId === user.id ? "Menyimpan..." : user.role === "admin" ? "Jadikan operator" : "Jadikan admin"}
@@ -199,4 +333,23 @@ function formatDate(value: string | null) {
   } catch {
     return value;
   }
+}
+
+function Info({
+  label,
+  value,
+  accent = false,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${accent ? "border-brand-200 bg-brand-50" : "border-slate-200 bg-slate-50"}`}>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">{label}</div>
+      <div className={`mt-1 break-all text-sm ${compact ? "font-mono text-xs text-slate-600" : accent ? "font-semibold text-brand-700" : "text-slate-700"}`}>{value}</div>
+    </div>
+  );
 }
