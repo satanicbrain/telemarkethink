@@ -24,19 +24,9 @@ export async function POST(request: Request) {
   const admin = createSupabaseAdminClient();
   const providerContext = await getActiveWhatsAppProvider();
 
-  const normalized: {
-    providerMessageId?: string;
-    status?: string;
-    eventType: string;
-    raw: unknown;
-  } = providerContext.provider.normalizeWebhookEvent
+  const normalized = providerContext.provider.normalizeWebhookEvent
     ? await providerContext.provider.normalizeWebhookEvent(payload)
-    : {
-        providerMessageId: undefined,
-        status: undefined,
-        eventType: "unknown",
-        raw: payload,
-      };
+    : { eventType: "unknown", raw: payload };
 
   await admin.from("webhook_events").insert({
     provider: providerContext.providerKey,
