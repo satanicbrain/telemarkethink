@@ -21,7 +21,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
-    const auth = await requireApiUser(["admin"]);
+    const auth = await requireApiUser(["admin", "operator"]);
     if (!auth.ok) return NextResponse.json({ error: auth.message }, { status: auth.status });
 
     const body = await request.json();
