@@ -72,27 +72,40 @@ export default function WaTemplatesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"default" | "success" | "error">("default");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
+  async function parseApiResponse(response: Response) {
+    const raw = await response.text();
+    try {
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return { error: raw || "Respons server tidak valid." };
+    }
+  }
+
   async function loadData() {
     setLoading(true);
     setMessage("");
+    setMessageTone("default");
     try {
       const response = await fetch("/api/templates/wa", { cache: "no-store" });
-      const json = await response.json();
+      const json = await parseApiResponse(response);
       if (!response.ok) {
         throw new Error(json.error ?? "Gagal memuat template.");
       }
 
       const rows = (json.data ?? []) as Template[];
       setTemplates(rows);
-      if (rows.length && !selectedId) {
-        setSelectedId(rows[0].id);
-      }
+      setSelectedId((current) => {
+        if (current && rows.some((row) => row.id === current)) return current;
+        return rows[0]?.id ?? null;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Gagal memuat template.");
+      setMessageTone("error");
     } finally {
       setLoading(false);
     }
@@ -120,10 +133,6 @@ export default function WaTemplatesPage() {
     });
   }, [templates, query]);
 
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.id === selectedId) ?? null,
-    [templates, selectedId]
-  );
 
   const liveVariables = useMemo(() => extractTemplateVariables(form.bodyTemplate), [form.bodyTemplate]);
   const livePreview = useMemo(
@@ -133,17 +142,21 @@ export default function WaTemplatesPage() {
 
   function resetForm() {
     setForm(EMPTY_FORM);
+    setMessage("");
+    setMessageTone("default");
   }
 
   function startEdit(template: Template) {
     setSelectedId(template.id);
     setForm(toFormState(template));
     setMessage("");
+    setMessageTone("default");
   }
 
   async function handleSeedDefaults() {
     setSaving(true);
     setMessage("");
+    setMessageTone("default");
 
     try {
       const response = await fetch("/api/templates/wa", {
@@ -151,15 +164,17 @@ export default function WaTemplatesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "seed_defaults" }),
       });
-      const json = await response.json();
+      const json = await parseApiResponse(response);
       if (!response.ok) {
         throw new Error(json.error ?? "Gagal menambahkan template rekomendasi.");
       }
 
       setMessage(json.message ?? "Template rekomendasi berhasil ditambahkan.");
+      setMessageTone("success");
       await loadData();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Gagal menambahkan template rekomendasi.");
+      setMessageTone("error");
     } finally {
       setSaving(false);
     }
@@ -169,6 +184,7 @@ export default function WaTemplatesPage() {
     event.preventDefault();
     setSaving(true);
     setMessage("");
+    setMessageTone("default");
 
     try {
       const isEdit = Boolean(form.id);
@@ -178,19 +194,23 @@ export default function WaTemplatesPage() {
         body: JSON.stringify(form),
       });
 
-      const json = await response.json();
+      const json = await parseApiResponse(response);
       if (!response.ok) {
         throw new Error(json.error ?? "Gagal menyimpan template.");
       }
 
       setMessage(json.message ?? "Template WhatsApp berhasil disimpan.");
+      setMessageTone("success");
       await loadData();
       if (json.data?.id) {
         setSelectedId(json.data.id);
+        setForm(toFormState(json.data as Template));
+      } else {
+        resetForm();
       }
-      resetForm();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Gagal menyimpan template.");
+      setMessageTone("error");
     } finally {
       setSaving(false);
     }
@@ -203,17 +223,19 @@ export default function WaTemplatesPage() {
 
     setSaving(true);
     setMessage("");
+    setMessageTone("default");
 
     try {
       const response = await fetch(`/api/templates/wa?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-      const json = await response.json();
+      const json = await parseApiResponse(response);
       if (!response.ok) {
         throw new Error(json.error ?? "Gagal menghapus template.");
       }
 
       setMessage(json.message ?? "Template berhasil dihapus.");
+      setMessageTone("success");
       if (selectedId === id) {
         setSelectedId(null);
       }
@@ -223,6 +245,7 @@ export default function WaTemplatesPage() {
       await loadData();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Gagal menghapus template.");
+      setMessageTone("error");
     } finally {
       setSaving(false);
     }
@@ -373,7 +396,14 @@ export default function WaTemplatesPage() {
               </div>
 
               {message ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <div
+                  className={cn(
+                    "rounded-2xl px-4 py-3 text-sm",
+                    messageTone === "error" && "border border-rose-200 bg-rose-50 text-rose-700",
+                    messageTone === "success" && "border border-emerald-200 bg-emerald-50 text-emerald-700",
+                    messageTone === "default" && "border border-slate-200 bg-slate-50 text-slate-700"
+                  )}
+                >
                   {message}
                 </div>
               ) : null}
@@ -454,10 +484,10 @@ export default function WaTemplatesPage() {
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-wrap gap-2">
-                            <Button type="button" variant="secondary" onClick={() => startEdit(template)}>
+                            <Button type="button" variant="secondary" onClick={() => startEdit(template)} disabled={saving}>
                               Edit
                             </Button>
-                            <Button type="button" variant="danger" onClick={() => handleDelete(template.id)}>
+                            <Button type="button" variant="danger" onClick={() => handleDelete(template.id)} disabled={saving}>
                               Hapus
                             </Button>
                           </div>
